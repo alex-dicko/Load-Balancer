@@ -61,7 +61,7 @@ func startBackend(port string) {
 	http.ListenAndServe(":"+port, mux)
 }
 
-func lb(w http.ResponseWriter, r *http.Request) {
+func lb(w http.ResponseWriter, r *http.Request, serverPool *ServerPool) {
 	peer := serverPool.GetNextPeer()
 	if peer != nil {
 		peer.ReverseProxy.ServeHTTP(w, r)
@@ -75,8 +75,23 @@ func main() {
 	go startBackend("8002")
 	go startBackend("8003")
 
-	u, _ := url.Parse("http://localhost:8001")
-	rp := httputil.NewSingleHostReverseProxy(u)
+	serverPool := &ServerPool{}
 
-	http.ListenAndServe(":8080", rp)
+	for _, port := range []string{"8001", "8002", "8003"} {
+		u, _ := url.Parse("http://localhost:" + port)
+		serverPool.backends = append(serverPool.backends, &Backend{
+			URL:          u,
+			Alive:        true,
+			ReverseProxy: httputil.NewSingleHostReverseProxy(u),
+		})
+	}
+
+	server := http.Server{
+		Addr: ":8080",
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			lb(w, r, serverPool)
+		}),
+	}
+
+	server.ListenAndServe()
 }
